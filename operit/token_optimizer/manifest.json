@@ -1,0 +1,15 @@
+{
+  "toolpkg_id": "io.github.operit.token_optimizer",
+  "name": {
+    "zh": "Token 优化器",
+    "en": "TokenOptimizer"
+  },
+  "version": "1.0.0",
+  "min_app_version": "1.0.0",
+  "author": "operit",
+  "description": {
+    "zh": "统一 Token 优化：响应压缩 + TOON 编码 + 命令重写 + 规约文档压缩 + 中间截断。无损优先，可回滚。",
+    "en": "Unified token optimization: response compression + TOON encoding + command rewriting + spec-doc compaction + middle truncation"
+  },
+  "main": "main.js"
+}

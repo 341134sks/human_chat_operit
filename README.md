@@ -54,6 +54,34 @@
 
 ---
 
+## Token 优化器 (TokenOptimizer)
+
+把 Tokenless / codex-tokens-compress / dsh-token-saver 三类能力统一进一个 Operit ToolPkg：
+
+| 能力 | 说明 |
+|------|------|
+| 响应压缩 | 去 ANSI、去噪音行、折叠空白、去 AI 味、超限中间截断 |
+| TOON 编码 | 结构化数据紧凑编码，通常比 JSON 更省 token |
+| 命令重写 | 给常见命令补静默/精简参数，降低输出噪音 |
+| 规约压缩 | 压缩 AGENTS.md / system prompt 片段：去重 bullet、删空节、按预算截断 |
+| 工具限流 | 单条工具输出 token 上限 + 中间截断，保留头尾 |
+| 统计 | `getStats()` 查看压缩前后与节省比例 |
+
+### 安装
+
+1. 下载 `operit/token_optimizer.toolpkg`
+2. 放到手机 `/sdcard/Android/data/com.ai.assistance.operit/files/packages/`
+3. 在 Operit → 包管理 → 右上角刷新 → 找到"Token 优化器" → 启用
+
+源码位于 `operit/token_optimizer/`（`manifest.json` + `main.js`）。重新打包：
+
+```bash
+cd operit/token_optimizer
+zip -X ../token_optimizer.toolpkg manifest.json main.js
+```
+
+---
+
 ## 开源协议
 
 MIT
