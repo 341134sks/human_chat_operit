@@ -39,12 +39,64 @@ var STATS = {
 };
 
 // ═════════════════════════════════════════
+// 运行时兼容层（不依赖 Node / Buffer，安卓端安全）
+// ═════════════════════════════════════════
+var HAS_BUFFER = typeof Buffer !== "undefined" && Buffer && typeof Buffer.byteLength === "function";
+var HAS_CONSOLE = typeof console !== "undefined" && console;
+
+function log(msg) {
+  if (HAS_CONSOLE && typeof console.log === "function") console.log(msg);
+}
+function err(msg) {
+  if (HAS_CONSOLE && typeof console.error === "function") console.error(msg);
+}
+
+function utf8ByteLength(str) {
+  if (typeof str !== "string") return 0;
+  if (HAS_BUFFER) return Buffer.byteLength(str, "utf8");
+  var bytes = 0;
+  for (var i = 0; i < str.length; i++) {
+    var code = str.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xD800 && code <= 0xDBFF) { bytes += 4; i++; }
+    else bytes += 3;
+  }
+  return bytes;
+}
+
+function assignInto(target, source) {
+  if (!target || !source) return target;
+  for (var k in source) {
+    if (Object.prototype.hasOwnProperty.call(source, k)) target[k] = source[k];
+  }
+  return target;
+}
+
+function objAssign() {
+  var target = arguments[0] || {};
+  for (var i = 1; i < arguments.length; i++) assignInto(target, arguments[i]);
+  return target;
+}
+
+function guard(fn, fallback) {
+  return function() {
+    try {
+      return fn.apply(null, arguments);
+    } catch (e) {
+      err("[TokenOptimizer] hook error: " + (e && e.message ? e.message : e));
+      return fallback;
+    }
+  };
+}
+
+// ═════════════════════════════════════════
 // 通用工具
 // ═════════════════════════════════════════
 
 function estimateTokens(text) {
   if (typeof text !== "string") return 0;
-  return Math.ceil(Buffer.byteLength(text, "utf8") / 4);
+  return Math.ceil(utf8ByteLength(text) / 4);
 }
 
 function record(name, before, after) {
@@ -336,7 +388,7 @@ function compressSpecDoc(text, maxBytes) {
 
   var out = compressWhitespace(result.join("\n"));
   var budget = maxBytes || config.limits.specDocBytes;
-  if (Buffer.byteLength(out, "utf8") > budget) {
+  if (utf8ByteLength(out) > budget) {
     var maxChars = Math.floor(budget / 2);
     out = out.slice(0, maxChars) + "\n…[规约已压缩截断]…";
   }
@@ -417,7 +469,7 @@ function onToolReadyCheck(tools) {
   if (!Array.isArray(tools)) return tools;
   return tools.map(function(t) {
     if (t && typeof t.description === "string" && t.description.length > 400) {
-      t = Object.assign({}, t, { description: t.description.slice(0, 400) + "…" });
+      t = objAssign({}, t, { description: t.description.slice(0, 400) + "…" });
     }
     return t;
   });
@@ -433,48 +485,53 @@ function tryRegister(api, method, id, fn) {
     api[method]({ id: id, function: fn });
     return true;
   } catch (e) {
-    console.error("[TokenOptimizer] register " + method + " failed: " + e);
+    err("[TokenOptimizer] register " + method + " failed: " + e);
     return false;
   }
 }
 
 function registerToolPkg() {
-  if (typeof ToolPkg === "undefined") {
-    console.error("[TokenOptimizer] ToolPkg not available");
+  try {
+    if (typeof ToolPkg === "undefined") {
+      err("[TokenOptimizer] ToolPkg not available");
+      return false;
+    }
+
+    var registered = [];
+
+    if (tryRegister(ToolPkg, "registerSystemPromptComposeHook", "token_optimizer_system_prompt", guard(onSystemPromptCompose))) {
+      registered.push("systemPrompt");
+    }
+    if (tryRegister(ToolPkg, "registerMessageProcessingPlugin", "token_optimizer_message", guard(onMessageProcessing, { matched: false }))) {
+      registered.push("message");
+    }
+    if (tryRegister(ToolPkg, "registerToolResultProcessingHook", "token_optimizer_tool_result", guard(onToolResultProcessing, { matched: false })) ||
+        tryRegister(ToolPkg, "registerToolResultProcessingPlugin", "token_optimizer_tool_result", guard(onToolResultProcessing, { matched: false }))) {
+      registered.push("toolResult");
+    }
+    if (tryRegister(ToolPkg, "registerCommandProcessingHook", "token_optimizer_command", guard(onCommandProcessing, { matched: false })) ||
+        tryRegister(ToolPkg, "registerCommandProcessingPlugin", "token_optimizer_command", guard(onCommandProcessing, { matched: false }))) {
+      registered.push("command");
+    }
+    if (tryRegister(ToolPkg, "registerToolReadyCheckHook", "token_optimizer_tool_ready", guard(onToolReadyCheck)) ||
+        tryRegister(ToolPkg, "registerToolReadyCheck", "token_optimizer_tool_ready", guard(onToolReadyCheck))) {
+      registered.push("toolReady");
+    }
+
+    log("[TokenOptimizer] registered hooks: " + (registered.join(", ") || "none (API 不匹配，仅纯函数可用)"));
+    return registered.length > 0;
+  } catch (e) {
+    err("[TokenOptimizer] registerToolPkg fatal: " + (e && e.message ? e.message : e));
     return false;
   }
-
-  var registered = [];
-
-  if (tryRegister(ToolPkg, "registerSystemPromptComposeHook", "token_optimizer_system_prompt", onSystemPromptCompose)) {
-    registered.push("systemPrompt");
-  }
-  if (tryRegister(ToolPkg, "registerMessageProcessingPlugin", "token_optimizer_message", onMessageProcessing)) {
-    registered.push("message");
-  }
-  if (tryRegister(ToolPkg, "registerToolResultProcessingHook", "token_optimizer_tool_result", onToolResultProcessing) ||
-      tryRegister(ToolPkg, "registerToolResultProcessingPlugin", "token_optimizer_tool_result", onToolResultProcessing)) {
-    registered.push("toolResult");
-  }
-  if (tryRegister(ToolPkg, "registerCommandProcessingHook", "token_optimizer_command", onCommandProcessing) ||
-      tryRegister(ToolPkg, "registerCommandProcessingPlugin", "token_optimizer_command", onCommandProcessing)) {
-    registered.push("command");
-  }
-  if (tryRegister(ToolPkg, "registerToolReadyCheckHook", "token_optimizer_tool_ready", onToolReadyCheck) ||
-      tryRegister(ToolPkg, "registerToolReadyCheck", "token_optimizer_tool_ready", onToolReadyCheck)) {
-    registered.push("toolReady");
-  }
-
-  console.log("[TokenOptimizer] registered hooks: " + (registered.join(", ") || "none (API 不匹配，仅纯函数可用)"));
-  return registered.length > 0;
 }
 
 function configure(patch) {
   if (!patch || typeof patch !== "object") return config;
-  if (patch.features) Object.assign(config.features, patch.features);
-  if (patch.limits) Object.assign(config.limits, patch.limits);
+  if (patch.features) assignInto(config.features, patch.features);
+  if (patch.limits) assignInto(config.limits, patch.limits);
   if (typeof patch.enabled === "boolean") config.enabled = patch.enabled;
-  if (patch.commandRewrite) Object.assign(config.commandRewrite, patch.commandRewrite);
+  if (patch.commandRewrite) assignInto(config.commandRewrite, patch.commandRewrite);
   return config;
 }
 
